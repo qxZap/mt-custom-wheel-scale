@@ -4,7 +4,7 @@ Plugin to change the scale of the wheels beyond their limits. Also adds wheel wi
 
 Raises the garage limits on wheel radius past the game's 0.80 - 1.20, adds a wheel width line per axle, and lets any wheel be fitted to any vehicle, including wheels from other mods.
 
-Settings: `Binaries\Win64\custom_wheel_scale.ini`, section `[WheelScale]`: `Min`, `Max`, `WidthMin`, `WidthMax`, `Step`.
+Settings: `Binaries\Win64\plugins\custom_wheel_scale.ini`, section `[WheelScale]`: `Min`, `Max`, `WidthMin`, `WidthMax`, `Step`.
 
 Single player and hosting only: on someone else's server, that server's limits apply.
 

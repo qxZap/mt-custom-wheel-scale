@@ -208,6 +208,7 @@ static DWORD WINAPI run(LPVOID) {
 extern "C" __declspec(dllexport) int PluginInit(const MtApi* a) {
     if (!attach(a)) return 1;
     MoveFileW((gameDir() + L"wheel_scale.ini").c_str(), (gameDir() + L"custom_wheel_scale.ini").c_str());  // settings from before the rename
+    if (iniDisabled(L"custom_wheel_scale.ini")) return 0;
     CloseHandle(CreateThread(nullptr, 0, run, nullptr, 0, nullptr));
     return 0;
 }
