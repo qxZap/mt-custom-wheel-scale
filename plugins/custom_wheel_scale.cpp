@@ -37,7 +37,7 @@ struct Ref { int index; uintptr_t ptr; };
 static bool alive(const Ref& r) { return r.ptr && api->object(r.index) == r.ptr; }
 
 static uintptr_t cVeh;
-static int oTunings = -1, tParam = -1, tTarget = -1, tValue = -1, tSize = 0;
+static int oId = -1, oTunings = -1, tParam = -1, tTarget = -1, tValue = -1, tSize = 0;
 
 static uintptr_t cTable, sPart;
 static int oGates[6], oWheelMesh[2];  // VehicleRowGameplayTagQuery's two arrays are in oGates
@@ -64,7 +64,17 @@ static void tick(void*) {
     for (auto& r : vehicles) {
         if (!alive(r) || get<int>(r.ptr + oTunings + 8) == 0) continue;
         std::string t = tunings(r.ptr);
-        if (lastLog[r.ptr] != t) { lastLog[r.ptr] = t; MT_LOG("tunings %s: %s", objName(classOf(r.ptr)).c_str(), t.c_str()); }
+        if (lastLog[r.ptr] == t) continue;
+        lastLog[r.ptr] = t;
+        MT_LOG("tunings %s: %s", objName(classOf(r.ptr)).c_str(), t.c_str());
+        // The log restarts with the game. This one keeps going, to compare a car across sessions.
+        if (FILE* f = loggingOn() ? _wfopen((gameDir() + L"plugins\\wheel_history.log").c_str(), L"a") : nullptr) {
+            SYSTEMTIME now;
+            GetLocalTime(&now);
+            long long id = oId >= 0 ? get<long long>(r.ptr + oId) : 0;
+            fprintf(f, "%02d-%02d %02d:%02d:%02d %s #%lld %s\n", now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond, objName(classOf(r.ptr)).c_str(), id, t.c_str());
+            fclose(f);
+        }
     }
 }
 
@@ -184,12 +194,14 @@ static DWORD WINAPI run(LPVOID) {
     cVeh = api->find_object("Class", "MTVehicle", "/Script/MotorTown");
     uintptr_t sEntry = api->find_object("ScriptStruct", "MTTuningEntry", "/Script/MotorTown");
     oTunings = off(cVeh, "Net_Tunings");
+    oId = off(cVeh, "Net_VehicleId");
     tParam = off(sEntry, "Param"); tTarget = off(sEntry, "TargetId"); tValue = off(sEntry, "Value");
     tSize = sEntry ? get<int>(sEntry + L().struct_child_props + 8) : 0;  // PropertiesSize follows ChildProperties
     if (!cVeh || oTunings < 0 || tSize <= 0 || tValue < 0) { MT_LOG("no tuning layout -- tunings not logged"); return 0; }
     bool gates = findGates();
     for (int beat = 0;; beat++) {
         bool sweep = gates && beat % 30 == 0;  // a table can load later than the last pass
+        if (!sweep && !loggingOn()) { Sleep(1000); continue; }
         int unlocked = 0;
         std::vector<Ref> v;
         for (int i = 0, n = api->num_objects(); i < n; i++) {
