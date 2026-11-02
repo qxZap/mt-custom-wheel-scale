@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/hero.png" alt="Custom Wheel Scale" width="100%">
+</p>
+
 # Custom Wheel Scale
 
 Plugin to change the scale of the wheels beyond their limits. Also adds wheel width scale..
