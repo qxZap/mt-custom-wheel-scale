@@ -12,14 +12,15 @@
 // supplies the label, range and saving.
 //
 // Any wheel: every row with a wheel mesh gets its vehicle gates cleared in the loaded
-// tables, whichever mod's they are. An override channel would sit above Wheel Works and
+// tables, whichever mod's they are, and its empty mesh slots filled from the ones it has
+// (an axle is offered only rows that fill the slot it asks for). An override channel would sit above Wheel Works and
 // put vanilla meshes back on its rows. RequiredGarageFlags stays: that is which shop sells
 // a wheel, not what it fits.
 //
 // Tunings of every vehicle are logged on change, so a clamp shows up.
 //
-// Settings: Binaries\Win64\custom_wheel_scale.ini, [WheelScale] Min / Max (0.1 / 2.0),
-// WidthMin / WidthMax (0.1 / 2.0), Step (0.01, as vanilla).
+// Settings: Binaries\Win64\custom_wheel_scale.ini, [WheelScale] Min / Max (0.1 / 4.0, monster trucks),
+// WidthMin / WidthMax (0.1 / 3.0), Step (0.01, as vanilla).
 //
 // shortcut: single player / host -- on a client the server owns Net_Tunings and its own
 // table, so a vanilla server keeps 0.80 - 1.20.
@@ -41,6 +42,12 @@ static int oId = -1, oTunings = -1, tParam = -1, tTarget = -1, tValue = -1, tSiz
 
 static uintptr_t cTable, sPart;
 static int oGates[6], oWheelMesh[2];  // VehicleRowGameplayTagQuery's two arrays are in oGates
+// Wheel mesh slots: Left, Right, DRWLeft, DRWRight, RearLeft, RearRight, Quad. Each axle asks for one kind (a dual rear
+// for DRW, a quad for Quad) and the list offers only rows that fill it -- vanilla fills Left/Right alone, so a vehicle
+// asking for another slot saw only rows that fill every slot (the pack wheels, 2026-11-08). WheelWorkshop's
+// make_universal (8d47b3206) did this in the tables up to 0.7.19; 0.7.20 ships vanilla Wheels as it is.
+static int oSlot[7];
+static const int STAND_IN[5][4] = {{0, 2, 4, 6}, {1, 3, 5, 6}, {2, 0, 4, 6}, {3, 1, 5, 6}, {6, 0, 2, 4}};  // target, donors in order
 
 static std::mutex lock;
 static std::vector<Ref> vehicles;
@@ -68,7 +75,7 @@ static void tick(void*) {
         lastLog[r.ptr] = t;
         MT_LOG("tunings %s: %s", objName(classOf(r.ptr)).c_str(), t.c_str());
         // The log restarts with the game. This one keeps going, to compare a car across sessions.
-        if (FILE* f = loggingOn() ? _wfopen((gameDir() + L"plugins\\wheel_history.log").c_str(), L"a") : nullptr) {
+        if (FILE* f = loggingOn() ? _wfopen((gameDir() + L"plugins\\logs\\CustomWheelScale\\wheel_history.log").c_str(), L"a") : nullptr) {
             SYSTEMTIME now;
             GetLocalTime(&now);
             long long id = oId >= 0 ? get<long long>(r.ptr + oId) : 0;
@@ -149,10 +156,20 @@ static int unlockTable(uintptr_t t) {
     uintptr_t el = get<uintptr_t>(t + rs + 8); int num = get<int>(t + rs + 16), done = 0, zero = 0;
     for (int j = 0; j < num; j++) {  // TSetElement: FName, uint8*, hash links = 24 bytes
         uintptr_t row = get<uintptr_t>(el + 24ull * j + 8);
-        if (!row || !(get<uintptr_t>(row + oWheelMesh[0]) || get<uintptr_t>(row + oWheelMesh[1]))) continue;
+        if (!row) continue;
+        bool any = false;
+        for (int o : oSlot) any = any || get<uintptr_t>(row + o);
+        if (!any) continue;
         bool hit = false;
         for (int o : oGates)
             if (get<int>(row + o + 8) > 0) { wr(row + o + 8, &zero, 4); hit = true; }
+        for (auto& si : STAND_IN) {  // Rear stays alone: on the rows that use it it is a real position, not a gap
+            if (get<uintptr_t>(row + oSlot[si[0]])) continue;
+            for (int k = 1; k < 4; k++) {
+                uintptr_t m = get<uintptr_t>(row + oSlot[si[k]]);
+                if (m) { wr(row + oSlot[si[0]], &m, 8); hit = true; break; }  // the row already holds m: GC-safe
+            }
+        }
         done += hit;
     }
     return done;
@@ -168,6 +185,8 @@ static bool findGates() {
                  off(sQuery, "TagDictionary"), off(sQuery, "QueryTokenStream"), off(sWheel, "LeftWheelMesh"), off(sWheel, "QuadWheelMesh")};
     bool ok = cTable && sPart && query >= 0 && wheel >= 0;
     for (int o : all) ok = ok && o >= 0;
+    const char* slots[] = {"LeftWheelMesh", "RightWheelMesh", "DRWLeftWheelMesh", "DRWRightWheelMesh", "RearLeftWheelMesh", "RearRightWheelMesh", "QuadWheelMesh"};
+    for (int i = 0; i < 7; i++) { oSlot[i] = off(sWheel, slots[i]); ok = ok && oSlot[i] >= 0; oSlot[i] += wheel; }
     if (!ok) { MT_LOG("wheels: row layout not found -- gates stay"); return false; }
     for (int i = 0; i < 6; i++) oGates[i] = all[i] + (i >= 4 ? query : 0);
     oWheelMesh[0] = wheel + all[6]; oWheelMesh[1] = wheel + all[7];
@@ -177,7 +196,7 @@ static bool findGates() {
 static DWORD WINAPI run(LPVOID) {
     MT_LOG("Custom Wheel Scale loaded");
     addWidthLines();
-    struct { const wchar_t* key; double v; } cfg[] = {{L"Min", 0.1}, {L"Max", 2.0}, {L"WidthMin", 0.1}, {L"WidthMax", 2.0}, {L"Step", 0.01}};
+    struct { const wchar_t* key; double v; } cfg[] = {{L"Min", 0.1}, {L"Max", 4.0}, {L"WidthMin", 0.1}, {L"WidthMax", 3.0}, {L"Step", 0.01}};
     for (auto& c : cfg) {
         c.v = iniNum(L"custom_wheel_scale.ini", L"WheelScale", c.key, c.v);
         MT_LOG("setting %ls = %g", c.key, c.v);
@@ -210,7 +229,7 @@ static DWORD WINAPI run(LPVOID) {
             if (api->is_a(classOf(o), cVeh)) v.push_back({i, o});
             else if (sweep && api->is_a(classOf(o), cTable)) unlocked += unlockTable(o);
         }
-        if (unlocked) MT_LOG("wheels: gates cleared on %d rows", unlocked);
+        if (unlocked) MT_LOG("wheels: gates cleared / empty mesh slots filled on %d rows", unlocked);
         { std::lock_guard<std::mutex> g(lock); vehicles.swap(v); }
         if (api->game_thread_ready()) api->run_on_game_thread(tick, nullptr);
         Sleep(1000);
